@@ -27,6 +27,7 @@ import tarfile
 import tempfile
 import sys
 from io import open
+import pdb
 
 import torch
 from torch import nn
@@ -34,6 +35,7 @@ from torch.nn import CrossEntropyLoss
 
 from .file_utils import cached_path, WEIGHTS_NAME, CONFIG_NAME
 
+FEATURE_VOCAB = 10282+1
 logger = logging.getLogger(__name__)
 
 PRETRAINED_MODEL_ARCHIVE_MAP = {
@@ -45,7 +47,7 @@ PRETRAINED_MODEL_ARCHIVE_MAP = {
     'bert-base-multilingual-cased': "https://s3.amazonaws.com/models.huggingface.co/bert/bert-base-multilingual-cased.tar.gz",
     'bert-base-chinese': "https://s3.amazonaws.com/models.huggingface.co/bert/bert-base-chinese.tar.gz",
 }
-BERT_CONFIG_NAME = 'bert_config.json'
+BERT_CONFIG_NAME = 'bert_config_tfv.json'
 TF_WEIGHTS_NAME = 'model.ckpt'
 
 def load_tf_weights_in_bert(model, tf_checkpoint_path):
@@ -144,6 +146,7 @@ class BertConfig(object):
                  hidden_dropout_prob=0.1,
                  attention_probs_dropout_prob=0.1,
                  max_position_embeddings=512,
+                 max_feature_embeddings=FEATURE_VOCAB,
                  type_vocab_size=2,
                  initializer_range=0.02,
                  layer_norm_eps=1e-12):
@@ -188,6 +191,7 @@ class BertConfig(object):
             self.hidden_dropout_prob = hidden_dropout_prob
             self.attention_probs_dropout_prob = attention_probs_dropout_prob
             self.max_position_embeddings = max_position_embeddings
+            self.max_feature_embeddings = max_feature_embeddings
             self.type_vocab_size = type_vocab_size
             self.initializer_range = initializer_range
             self.layer_norm_eps = layer_norm_eps
@@ -253,6 +257,7 @@ class BertEmbeddings(nn.Module):
         super(BertEmbeddings, self).__init__()
         self.word_embeddings = nn.Embedding(config.vocab_size, config.hidden_size, padding_idx=0)
         self.position_embeddings = nn.Embedding(config.max_position_embeddings, config.hidden_size)
+        self.feature_embeddings = nn.Embedding(config.max_feature_embeddings, config.hidden_size, padding_idx=0)
         self.token_type_embeddings = nn.Embedding(config.type_vocab_size, config.hidden_size)
 
         # self.LayerNorm is not snake-cased to stick with TensorFlow model variable name and be able to load
@@ -261,6 +266,7 @@ class BertEmbeddings(nn.Module):
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
     def forward(self, input_ids, token_type_ids=None):
+        input_ids, feature_ids = input_ids
         seq_length = input_ids.size(1)
         position_ids = torch.arange(seq_length, dtype=torch.long, device=input_ids.device)
         position_ids = position_ids.unsqueeze(0).expand_as(input_ids)
@@ -269,9 +275,10 @@ class BertEmbeddings(nn.Module):
 
         words_embeddings = self.word_embeddings(input_ids)
         position_embeddings = self.position_embeddings(position_ids)
+        feature_embeddings = self.feature_embeddings(feature_ids)
         token_type_embeddings = self.token_type_embeddings(token_type_ids)
 
-        embeddings = words_embeddings + position_embeddings + token_type_embeddings
+        embeddings = words_embeddings + position_embeddings + token_type_embeddings + feature_embeddings
         embeddings = self.LayerNorm(embeddings)
         embeddings = self.dropout(embeddings)
         return embeddings
@@ -553,6 +560,7 @@ class BertPreTrainedModel(nn.Module):
             *inputs, **kwargs: additional input for the specific Bert class
                 (ex: num_labels for BertForSequenceClassification)
         """
+        logger.info("loading model ...")
         state_dict = kwargs.get('state_dict', None)
         kwargs.pop('state_dict', None)
         cache_dir = kwargs.get('cache_dir', None)
@@ -710,6 +718,7 @@ class BertModel(BertPreTrainedModel):
         self.apply(self.init_bert_weights)
 
     def forward(self, input_ids, token_type_ids=None, attention_mask=None, output_all_encoded_layers=True):
+        input_ids, feature_ids = input_ids
         if attention_mask is None:
             attention_mask = torch.ones_like(input_ids)
         if token_type_ids is None:
@@ -730,6 +739,7 @@ class BertModel(BertPreTrainedModel):
         extended_attention_mask = extended_attention_mask.to(dtype=next(self.parameters()).dtype) # fp16 compatibility
         extended_attention_mask = (1.0 - extended_attention_mask) * -10000.0
 
+        input_ids = (input_ids, feature_ids)
         embedding_output = self.embeddings(input_ids, token_type_ids)
         encoded_layers = self.encoder(embedding_output,
                                       extended_attention_mask,
