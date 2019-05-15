@@ -112,10 +112,10 @@ class QqpProcessor(DataProcessor):
         return self._create_examples(
             self._read_tsv(os.path.join(data_dir, "train.tsv")), "train")
 
-    def get_dev_examples(self, data_dir):
+    def get_dev_examples(self, data_dir, dataset="dev"):
         """See base class."""
         return self._create_examples(
-            self._read_tsv(os.path.join(data_dir, "dev.tsv")), "dev")
+            self._read_tsv(os.path.join(data_dir, "{}.tsv".format(dataset))), dataset)
 
     def get_labels(self):
         """See base class."""
@@ -324,6 +324,12 @@ def main():
                         help="The output directory where the model predictions and checkpoints will be written.")
 
     ## Other parameters
+    parser.add_argument("--test_set",
+                        default="dev",
+                        type=str)
+    parser.add_argument('--period',
+                        type=int,
+                        default=500)
     parser.add_argument("--cache_dir",
                         default="",
                         type=str,
@@ -573,7 +579,11 @@ def main():
                 else:
                     loss.backward()
 
-                writer.add_scalar('train/loss', loss, step)
+                writer.add_scalar('train/loss', loss, global_step)
+
+                if step % args.period == 0:
+                    evaluate(args, model, device, processor, label_list, num_labels, tokenizer, output_mode, tr_loss,
+                             global_step, task_name, writer)
 
                 tr_loss += loss.item()
                 nb_tr_examples += input_ids.size(0)
@@ -589,34 +599,43 @@ def main():
                     optimizer.zero_grad()
                     global_step += 1
 
+
+
+def evaluate(args, model, device, processor, label_list, num_labels, tokenizer, output_mode, tr_loss, global_step, task_name, tbwriter):
+
     if args.do_train and (args.local_rank == -1 or torch.distributed.get_rank() == 0):
         # Save a trained model, configuration and tokenizer
         model_to_save = model.module if hasattr(model, 'module') else model  # Only save the model it-self
 
         # If we save using the predefined names, we can load using `from_pretrained`
-        output_model_file = os.path.join(args.output_dir, WEIGHTS_NAME)
-        output_config_file = os.path.join(args.output_dir, CONFIG_NAME)
+
+        output_dir = os.path.join(args.output_dir, 'save_step_{}'.format(global_step))
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+
+        output_model_file = os.path.join(output_dir, WEIGHTS_NAME)
+        output_config_file = os.path.join(output_dir, CONFIG_NAME)
 
         torch.save(model_to_save.state_dict(), output_model_file)
         model_to_save.config.to_json_file(output_config_file)
-        tokenizer.save_vocabulary(args.output_dir)
+        tokenizer.save_vocabulary(output_dir)
 
         # Load a trained model and vocabulary that you have fine-tuned
-        model = BertForSequenceClassification.from_pretrained(args.output_dir, num_labels=num_labels)
-        tokenizer = BertTokenizer.from_pretrained(args.output_dir, do_lower_case=args.do_lower_case)
+        model = BertForSequenceClassification.from_pretrained(output_dir, num_labels=num_labels)
+        tokenizer = BertTokenizer.from_pretrained(output_dir, do_lower_case=args.do_lower_case)
     else:
         model = BertForSequenceClassification.from_pretrained(args.bert_model, num_labels=num_labels)
     model.to(device)
 
     if args.do_eval and (args.local_rank == -1 or torch.distributed.get_rank() == 0):
-        eval_examples = processor.get_dev_examples(args.data_dir)
+        eval_examples = processor.get_dev_examples(args.data_dir, dataset=args.test_set)
         eval_features = convert_examples_to_features(
             eval_examples, label_list, args.max_seq_length, tokenizer, output_mode)
         logger.info("***** Running evaluation *****")
         logger.info("  Num examples = %d", len(eval_examples))
         logger.info("  Batch size = %d", args.eval_batch_size)
         all_input_ids = torch.tensor([f.input_ids[0] for f in eval_features], dtype=torch.long)
-        all_feature_ids = torch.tensor([f.input_ids[1] for f in train_features], dtype=torch.long)
+        all_feature_ids = torch.tensor([f.input_ids[1] for f in eval_features], dtype=torch.long)
         all_input_mask = torch.tensor([f.input_mask for f in eval_features], dtype=torch.long)
         all_segment_ids = torch.tensor([f.segment_ids for f in eval_features], dtype=torch.long)
 
@@ -652,7 +671,7 @@ def main():
             elif output_mode == "regression":
                 loss_fct = MSELoss()
                 tmp_eval_loss = loss_fct(logits.view(-1), label_ids.view(-1))
-            
+
             eval_loss += tmp_eval_loss.mean().item()
             nb_eval_steps += 1
             if len(preds) == 0:
@@ -678,6 +697,7 @@ def main():
         with open(output_eval_file, "w") as writer:
             logger.info("***** Eval results *****")
             for key in sorted(result.keys()):
+                tbwriter.add_scalar('{}/{}'.format(args.test_set, key), result[key], global_step)
                 logger.info("  %s = %s", key, str(result[key]))
                 writer.write("%s = %s\n" % (key, str(result[key])))
 
