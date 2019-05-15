@@ -16,13 +16,14 @@
 """BERT finetuning runner."""
 
 from __future__ import absolute_import, division, print_function
-
+from collections import Counter
 import argparse
 import csv
 import logging
 import os
 import random
 import sys
+import pdb
 
 import numpy as np
 import torch
@@ -39,6 +40,7 @@ from pytorch_pretrained_bert.file_utils import PYTORCH_PRETRAINED_BERT_CACHE, WE
 from pytorch_pretrained_bert.modeling import BertForSequenceClassification, BertConfig
 from pytorch_pretrained_bert.tokenization import BertTokenizer
 from pytorch_pretrained_bert.optimization import BertAdam, WarmupLinearSchedule
+from tensorboardX import SummaryWriter
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +147,7 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
     label_map = {label: i for i, label in enumerate(label_list)}
 
     features = []
+    logger.info("convert_examples_to_features ...")
     for (ex_index, example) in enumerate(examples[:20000]):
         if ex_index % 10000 == 0:
             logger.info("Writing example %d of %d" % (ex_index, len(examples)))
@@ -152,24 +155,24 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
         example, column_types = example
         tokens_a = tokenizer.tokenize(example.text_a)
 
-        tokens_b = None
-        if example.text_b:
-            tokens_b = tokenizer.tokenize(example.text_b)
-            # Modifies `tokens_a` and `tokens_b` in place so that the total
-            # length is less than the specified length.
-            # Account for [CLS], [SEP], [SEP] with "- 3"
-            _truncate_seq_pair(tokens_a, tokens_b, max_seq_length - 3)
-        else:
-            # Account for [CLS] and [SEP] with "- 2"
-            if len(tokens_a) > max_seq_length - 2:
-                tokens_a = tokens_a[:(max_seq_length - 2)]
-
         temp, feature_ids = [], []
         segments = [x.strip() for x in ' '.join(tokens_a).split('[SEP]')]
         for idx, seg in enumerate(segments):
             temp.extend(seg.split())
             feature_ids.extend([column_types[idx]]*len(seg.split()))
         tokens_a = temp
+
+        tokens_b = None
+        if example.text_b:
+            tokens_b = tokenizer.tokenize(example.text_b)
+            # Modifies `tokens_a` and `tokens_b` in place so that the total
+            # length is less than the specified length.
+            # Account for [CLS], [SEP], [SEP] with "- 3"
+            _truncate_seq_pair(tokens_a, tokens_b, feature_ids, max_seq_length - 3)
+        else:
+            # Account for [CLS] and [SEP] with "- 2"
+            if len(tokens_a) > max_seq_length - 2:
+                tokens_a = tokens_a[:(max_seq_length - 2)]
 
         # The convention in BERT is:
         # (a) For sequence pairs:
@@ -243,7 +246,7 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
     return features
 
 
-def _truncate_seq_pair(tokens_a, tokens_b, max_length):
+def _truncate_seq_pair(tokens_a, tokens_b, feature_ids, max_length):
     """Truncates a sequence pair in place to the maximum length."""
 
     # This is a simple heuristic which will always truncate the longer sequence
@@ -256,6 +259,7 @@ def _truncate_seq_pair(tokens_a, tokens_b, max_length):
             break
         if len(tokens_a) > len(tokens_b):
             tokens_a.pop()
+            feature_ids.pop()
         else:
             tokens_b.pop()
 
@@ -325,7 +329,7 @@ def main():
                         type=str,
                         help="Where do you want to store the pre-trained models downloaded from s3")
     parser.add_argument("--max_seq_length",
-                        default=128,
+                        default=512,
                         type=int,
                         help="The maximum total input sequence length after WordPiece tokenization. \n"
                              "Sequences longer than this will be truncated, and sequences shorter \n"
@@ -340,7 +344,7 @@ def main():
                         action='store_true',
                         help="Set this flag if you are using an uncased model.")
     parser.add_argument("--train_batch_size",
-                        default=32,
+                        default=6,
                         type=int,
                         help="Total batch size for training.")
     parser.add_argument("--eval_batch_size",
@@ -438,6 +442,7 @@ def main():
         raise ValueError("Output directory ({}) already exists and is not empty.".format(args.output_dir))
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
+    writer = SummaryWriter(os.path.join(args.output_dir, 'events'))
 
     task_name = args.task_name.lower()
 
@@ -522,7 +527,6 @@ def main():
         logger.info("  Num examples = %d", len(train_examples))
         logger.info("  Batch size = %d", args.train_batch_size)
         logger.info("  Num steps = %d", num_train_optimization_steps)
-        print(train_features[0])
         all_input_ids = torch.tensor([f.input_ids[0] for f in train_features], dtype=torch.long)
         all_feature_ids = torch.tensor([f.input_ids[1] for f in train_features], dtype=torch.long)
         all_input_mask = torch.tensor([f.input_mask for f in train_features], dtype=torch.long)
@@ -541,7 +545,8 @@ def main():
         train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size=args.train_batch_size)
 
         model.train()
-        for _ in trange(int(args.num_train_epochs), desc="Epoch"):
+        for epoch in trange(int(args.num_train_epochs), desc="Epoch"):
+            logger.info("Training epoch {} ...".format(epoch))
             tr_loss = 0
             nb_tr_examples, nb_tr_steps = 0, 0
             for step, batch in enumerate(tqdm(train_dataloader, desc="Iteration")):
@@ -567,6 +572,8 @@ def main():
                     optimizer.backward(loss)
                 else:
                     loss.backward()
+
+                writer.add_scalar('train/loss', loss, step)
 
                 tr_loss += loss.item()
                 nb_tr_examples += input_ids.size(0)
