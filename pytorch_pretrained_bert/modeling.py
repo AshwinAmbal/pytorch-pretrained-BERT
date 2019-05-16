@@ -260,7 +260,7 @@ class BertEmbeddings(nn.Module):
         self.token_type_embeddings = nn.Embedding(config.type_vocab_size, config.hidden_size)
         # feature_embeddings initialized with 0s
         self.feature_embeddings = nn.Embedding(config.max_feature_embeddings, config.hidden_size, padding_idx=0)
-        self.feature_embeddings.weight.data.fill_(0)
+        # self.feature_embeddings.weight.data.fill_(0)
 
         # self.LayerNorm is not snake-cased to stick with TensorFlow model variable name and be able to load
         # any TensorFlow checkpoint file
@@ -562,7 +562,7 @@ class BertPreTrainedModel(nn.Module):
             *inputs, **kwargs: additional input for the specific Bert class
                 (ex: num_labels for BertForSequenceClassification)
         """
-        logger.info("loading model ...")
+        logger.info("loading model from {}".format(pretrained_model_name_or_path))
         state_dict = kwargs.get('state_dict', None)
         kwargs.pop('state_dict', None)
         cache_dir = kwargs.get('cache_dir', None)
@@ -608,7 +608,7 @@ class BertPreTrainedModel(nn.Module):
             # Backward compatibility with old naming format
             config_file = os.path.join(serialization_dir, BERT_CONFIG_NAME)
         config = BertConfig.from_json_file(config_file)
-        logger.info("Model config {}".format(config))
+        logger.info("Model config {} restored from {}".format(config, config_file))
         # Instantiate model.
         model = cls(config, *inputs, **kwargs)
         if state_dict is None and not from_tf:

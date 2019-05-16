@@ -41,7 +41,7 @@ from pytorch_pretrained_bert.modeling import BertForSequenceClassification, Bert
 from pytorch_pretrained_bert.tokenization import BertTokenizer
 from pytorch_pretrained_bert.optimization import BertAdam, WarmupLinearSchedule
 from tensorboardX import SummaryWriter
-
+from pprint import pprint
 logger = logging.getLogger(__name__)
 
 
@@ -97,7 +97,10 @@ class DataProcessor(object):
         with open(input_file, "r", encoding="utf-8") as f:
             reader = csv.reader(f, delimiter="\t", quotechar=quotechar)
             lines = []
+            idx = 0
             for line in reader:
+                idx += 1
+                # if idx > 100: break
                 if sys.version_info[0] == 2:
                     line = list(unicode(cell, 'utf-8') for cell in line)
                 lines.append(line)
@@ -155,27 +158,28 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
         example, column_types = example
         tokens_a = tokenizer.tokenize(example.text_a)
 
-        temp, feature_ids = [], []
+        temp, feature_ids_a = [], []
         segments = [x.strip() for x in ' '.join(tokens_a).split(' [CLS] ')]
-        position_ids = []
+        position_ids_a = []
         for idx, seg in enumerate(segments):
             cnt = 0
             for cell in seg.split(' [SEP] '):
-                cell_tks = cell.split()
-                position_ids.extend(list(range(1, len(cell_tks)+1)))
+                cell_tks = [x.strip() for x in cell.split() if len(x.strip()) > 0]
+                position_ids_a.extend(list(range(1, len(cell_tks)+1)))
                 cnt += len(cell_tks)
                 temp.extend(cell_tks)
-            feature_ids.extend([column_types[idx]]*cnt)
+            feature_ids_a.extend([column_types[idx]]*cnt)
         tokens_a = temp
-        assert len(feature_ids) == len(tokens_a) == len(position_ids)
 
+        assert len(feature_ids_a) == len(tokens_a) == len(position_ids_a)
+        # pdb.set_trace()
         tokens_b = None
         if example.text_b:
             tokens_b = tokenizer.tokenize(example.text_b)
             # Modifies `tokens_a` and `tokens_b` in place so that the total
             # length is less than the specified length.
             # Account for [CLS], [SEP], [SEP] with "- 3"
-            _truncate_seq_pair(tokens_a, tokens_b, feature_ids, position_ids, max_seq_length - 3)
+            _truncate_seq_pair(tokens_a, tokens_b, feature_ids_a, position_ids_a, max_seq_length - 3)
         else:
             # Account for [CLS] and [SEP] with "- 2"
             if len(tokens_a) > max_seq_length - 2:
@@ -199,16 +203,31 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
         # For classification tasks, the first vector (corresponding to [CLS]) is
         # used as as the "sentence vector". Note that this only makes sense because
         # the entire model is fine-tuned.
+        # NOTE: fact is tokens_b and is now in front
+        tokens = ["[CLS]"] + tokens_b + ["[SEP]"]
+        feature_ids = [0] * (len(tokens_b)+2)
+        position_ids = list(range(0, len(tokens_b)+2))
+        segment_ids = [0] * (len(tokens_b) + 2)
+
+        assert len(tokens) == len(feature_ids) == len(position_ids) == len(segment_ids)
+
+        tokens += tokens_a + ["[SEP]"]
+        feature_ids += feature_ids_a + [0]
+        position_ids += position_ids_a + [1]
+        segment_ids += [1] * (len(tokens_a) + 1)
+
+        '''
         tokens = ["[CLS]"] + tokens_a + ["[SEP]"]
         feature_ids = [0] + feature_ids + [0]
-        position_ids = [0] + position_ids + [0]
+        position_ids = [0] + position_ids + [1]  # TODO: try using [position_ids[-1]+1]
         segment_ids = [0] * len(tokens)
 
         if tokens_b:
             tokens += tokens_b + ["[SEP]"]
             feature_ids += [0] * (len(tokens_b)+1)
-            position_ids += [0] * (len(tokens_b)+1)
+            position_ids += list(range(1, len(tokens_b)+2))
             segment_ids += [1] * (len(tokens_b) + 1)
+        # '''
 
         assert len(tokens) == len(feature_ids)
         input_ids = tokenizer.convert_tokens_to_ids(tokens)
@@ -240,12 +259,12 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
         if ex_index < 5:
             logger.info("*** Example ***")
             logger.info("guid: %s" % (example.guid))
-            logger.info("tokens: %s" % " ".join(
-                    [str(x) for x in tokens]))
+            logger.info("tokens: %s" % " ".join([str(x) for x in tokens]))
             logger.info("input_ids: %s" % " ".join([str(x) for x in input_ids]))
+            logger.info("feature_ids: %s" % " ".join([str(x) for x in feature_ids]))
+            logger.info("position_ids: %s" % " ".join([str(x) for x in position_ids]))
             logger.info("input_mask: %s" % " ".join([str(x) for x in input_mask]))
-            logger.info(
-                    "segment_ids: %s" % " ".join([str(x) for x in segment_ids]))
+            logger.info("segment_ids: %s" % " ".join([str(x) for x in segment_ids]))
             logger.info("label: %s (id = %d)" % (example.label, label_id))
 
         features.append(
@@ -329,7 +348,7 @@ def main():
                         # required=True,
                         help="The name of the task to train.")
     parser.add_argument("--output_dir",
-                        default="/mnt/bhd/hongmin/tfv_bert_output_flat_column/outputs",
+                        default="/mnt/bhd/hongmin/tfv_bert_output_small_table/outputs",
                         type=str,
                         # required=True,
                         help="The output directory where the model predictions and checkpoints will be written.")
@@ -407,6 +426,8 @@ def main():
     parser.add_argument('--server_ip', type=str, default='', help="Can be used for distant debugging.")
     parser.add_argument('--server_port', type=str, default='', help="Can be used for distant debugging.")
     args = parser.parse_args()
+    pprint(vars(args))
+    sys.stdout.flush()
 
     if args.server_ip and args.server_port:
         # Distant debugging - see https://code.visualstudio.com/docs/python/debugging#_attach-to-a-local-script
@@ -565,7 +586,6 @@ def main():
         model.train()
         for epoch in trange(int(args.num_train_epochs), desc="Epoch"):
             logger.info("Training epoch {} ...".format(epoch))
-            tr_loss = 0
             nb_tr_examples, nb_tr_steps = 0, 0
             for step, batch in enumerate(tqdm(train_dataloader, desc="Iteration")):
                 batch = tuple(t.to(device) for t in batch)
@@ -592,9 +612,30 @@ def main():
                     loss.backward()
 
                 writer.add_scalar('train/loss', loss, global_step)
+                tr_loss += loss.item()
 
-                if step % args.period == 0:
+                nb_tr_examples += input_ids.size(0)
+                nb_tr_steps += 1
+                if (step + 1) % args.gradient_accumulation_steps == 0:
+                    total_norm = 0.0
+                    for n, p in model.named_parameters():
+                        if p.grad is not None:
+                            param_norm = p.grad.data.norm(2)
+                            total_norm += param_norm.item() ** 2
+                    total_norm = total_norm ** (1. / 2)
+                    writer.add_scalar('train/gradient_norm', total_norm, global_step)
+                    if args.fp16:
+                        # modify learning rate with special warm up BERT uses
+                        # if args.fp16 is False, BertAdam is used that handles this automatically
+                        lr_this_step = args.learning_rate * warmup_linear.get_lr(global_step, args.warmup_proportion)
+                        writer.add_scalar('train/lr', lr_this_step, global_step)
+                        for param_group in optimizer.param_groups:
+                            param_group['lr'] = lr_this_step
+                    optimizer.step()
+                    optimizer.zero_grad()
+                    global_step += 1
 
+                if (step + 1) % args.period == 0:
                     if args.do_train and (args.local_rank == -1 or torch.distributed.get_rank() == 0):
                         # Save a trained model, configuration and tokenizer
                         model_to_save = model.module if hasattr(model,
@@ -619,23 +660,16 @@ def main():
                     else:
                         model = BertForSequenceClassification.from_pretrained(args.bert_model, num_labels=num_labels)
                     model.to(device)
-                    
+
+                    model.eval()
+                    torch.set_grad_enabled(False)  # turn off gradient tracking
                     evaluate(args, model, device, processor, label_list, num_labels, tokenizer, output_mode, tr_loss,
                              global_step, task_name, writer)
+                    model.train()  # turn on train mode
+                    torch.set_grad_enabled(True)  # start gradient tracking
+                    tr_loss = 0
 
-                tr_loss += loss.item()
-                nb_tr_examples += input_ids.size(0)
-                nb_tr_steps += 1
-                if (step + 1) % args.gradient_accumulation_steps == 0:
-                    if args.fp16:
-                        # modify learning rate with special warm up BERT uses
-                        # if args.fp16 is False, BertAdam is used that handles this automatically
-                        lr_this_step = args.learning_rate * warmup_linear.get_lr(global_step, args.warmup_proportion)
-                        for param_group in optimizer.param_groups:
-                            param_group['lr'] = lr_this_step
-                    optimizer.step()
-                    optimizer.zero_grad()
-                    global_step += 1
+    # do eval before exit
     if args.do_eval:
         evaluate(args, model, device, processor, label_list, num_labels, tokenizer, output_mode, tr_loss,
                  global_step, task_name, writer)
@@ -666,7 +700,6 @@ def evaluate(args, model, device, processor, label_list, num_labels, tokenizer, 
         eval_sampler = SequentialSampler(eval_data)
         eval_dataloader = DataLoader(eval_data, sampler=eval_sampler, batch_size=args.eval_batch_size)
 
-        model.eval()
         eval_loss = 0
         nb_eval_steps = 0
         preds = []
@@ -705,7 +738,7 @@ def evaluate(args, model, device, processor, label_list, num_labels, tokenizer, 
         elif output_mode == "regression":
             preds = np.squeeze(preds)
         result = compute_metrics(task_name, preds, all_label_ids.numpy())
-        loss = tr_loss/global_step if args.do_train and global_step > 0 else None
+        loss = tr_loss/args.period if args.do_train and global_step > 0 else None
 
         result['eval_loss'] = eval_loss
         result['global_step'] = global_step
@@ -723,3 +756,8 @@ def evaluate(args, model, device, processor, label_list, num_labels, tokenizer, 
 
 if __name__ == "__main__":
     main()
+
+# TODO:
+# (1) eval on train
+# (2) save: prediction output
+# (3) finetune masked-LM before finetuning classification
