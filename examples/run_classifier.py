@@ -151,6 +151,8 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
     label_map = {label: i for i, label in enumerate(label_list)}
 
     features = []
+    pos_buf = []
+    neg_buf = []
     logger.info("convert_examples_to_features ...")
     for (ex_index, example) in enumerate(examples):
         if ex_index % 10000 == 0:
@@ -270,12 +272,28 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
             logger.info("input_mask: %s" % " ".join([str(x) for x in input_mask]))
             logger.info("segment_ids: %s" % " ".join([str(x) for x in segment_ids]))
             logger.info("label: %s (id = %d)" % (example.label, label_id))
+        
+        if label_id == 1:
+            pos_buf.append(InputFeatures(input_ids=input_ids,
+                              input_mask=input_mask,
+                              segment_ids=segment_ids,
+                              label_id=label_id))
+        else:
+            neg_buf.append(InputFeatures(input_ids=input_ids,
+                              input_mask=input_mask,
+                              segment_ids=segment_ids,
+                              label_id=label_id))
 
+        if len(pos_buf) > 0 and len(neg_buf) > 0:
+            features.append(pos_buf.pop(0))
+            features.append(neg_buf.pop(0))
+        """
         features.append(
                 InputFeatures(input_ids=input_ids,
                               input_mask=input_mask,
                               segment_ids=segment_ids,
                               label_id=label_id))
+        """
     return features
 
 
@@ -354,7 +372,7 @@ def main():
                         # required=True,
                         help="The name of the task to train.")
     parser.add_argument("--output_dir",
-                        default="/mnt/bhd/hongmin/tfv_bert_output_table2sents/outputs",
+                        default="./tmp/",
                         type=str,
                         # required=True,
                         help="The output directory where the model predictions and checkpoints will be written.")
@@ -595,7 +613,7 @@ def main():
         for epoch in trange(int(args.num_train_epochs), desc="Epoch"):
             logger.info("Training epoch {} ...".format(epoch))
             nb_tr_examples, nb_tr_steps = 0, 0
-            for step, batch in enumerate(tqdm(train_dataloader, desc="Iteration")):
+            for step, batch in enumerate(train_dataloader):
                 batch = tuple(t.to(device) for t in batch)
                 # input_ids, feature_ids, position_ids, input_mask, segment_ids, label_ids = batch
                 input_ids, input_mask, segment_ids, label_ids = batch
@@ -632,6 +650,9 @@ def main():
                             param_norm = p.grad.data.norm(2)
                             total_norm += param_norm.item() ** 2
                     total_norm = total_norm ** (1. / 2)
+                    preds = torch.argmax(logits, -1) == label_ids
+                    acc = torch.sum(preds).float() / preds.size(0)
+                    print(step, loss.item(), acc.item(), label_ids.cpu().data.numpy(), torch.argmax(logits, -1).cpu().data.numpy())
                     writer.add_scalar('train/gradient_norm', total_norm, global_step)
                     if args.fp16:
                         # modify learning rate with special warm up BERT uses
