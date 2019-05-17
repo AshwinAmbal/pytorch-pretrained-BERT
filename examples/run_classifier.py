@@ -372,10 +372,16 @@ def main():
                         # required=True,
                         help="The name of the task to train.")
     parser.add_argument("--output_dir",
-                        default="./tmp/",
+                        default="/mnt/bhd/hongmin/tfv_bert_output_table2sents/outputs",
                         type=str,
                         # required=True,
                         help="The output directory where the model predictions and checkpoints will be written.")
+
+    parser.add_argument("--load_dir",
+                        default=None,
+                        type=str,
+                        # required=True,
+                        help="The output directory where the model predictions and checkpoints will be loaded.")
 
     ## Other parameters
     parser.add_argument("--test_set",
@@ -416,7 +422,7 @@ def main():
                         type=float,
                         help="The initial learning rate for Adam.")
     parser.add_argument("--num_train_epochs",
-                        default=3.0,
+                        default=20.0,
                         type=float,
                         help="Total number of training epochs to perform.")
     parser.add_argument("--warmup_proportion",
@@ -531,7 +537,12 @@ def main():
 
     # NOTE: Prepare model
     cache_dir = args.cache_dir if args.cache_dir else os.path.join(str(PYTORCH_PRETRAINED_BERT_CACHE), 'distributed_{}'.format(args.local_rank))
-    model = BertForSequenceClassification.from_pretrained(args.bert_model,
+    if args.load_dir:
+        load_dir = args.load_dir
+    else:
+        load_dir = args.bert_model
+
+    model = BertForSequenceClassification.from_pretrained(load_dir,
               cache_dir=cache_dir,
               num_labels=num_labels)
     if args.fp16:
@@ -613,7 +624,8 @@ def main():
         for epoch in trange(int(args.num_train_epochs), desc="Epoch"):
             logger.info("Training epoch {} ...".format(epoch))
             nb_tr_examples, nb_tr_steps = 0, 0
-            for step, batch in enumerate(train_dataloader):
+            for step, batch in enumerate(tqdm(train_dataloader, desc="Iteration")):
+            # for step, batch in enumerate(train_dataloader):
                 batch = tuple(t.to(device) for t in batch)
                 # input_ids, feature_ids, position_ids, input_mask, segment_ids, label_ids = batch
                 input_ids, input_mask, segment_ids, label_ids = batch
@@ -652,7 +664,7 @@ def main():
                     total_norm = total_norm ** (1. / 2)
                     preds = torch.argmax(logits, -1) == label_ids
                     acc = torch.sum(preds).float() / preds.size(0)
-                    print(step, loss.item(), acc.item(), label_ids.cpu().data.numpy(), torch.argmax(logits, -1).cpu().data.numpy())
+                    # print(step, loss.item(), acc.item(), label_ids.cpu().data.numpy(), torch.argmax(logits, -1).cpu().data.numpy())
                     writer.add_scalar('train/gradient_norm', total_norm, global_step)
                     if args.fp16:
                         # modify learning rate with special warm up BERT uses
@@ -693,10 +705,9 @@ def main():
 
     # do eval before exit
     if args.do_eval:
-        if not args.do_train:
+        # if not args.do_train:
             # Load a trained model and vocabulary that you have fine-tuned
-            model = BertForSequenceClassification.from_pretrained(output_dir, num_labels=num_labels)
-            tokenizer = BertTokenizer.from_pretrained(output_dir, do_lower_case=args.do_lower_case)
+            # model = BertForSequenceClassification.from_pretrained(args.load_dir, num_labels=num_labels)
         evaluate(args, model, device, processor, label_list, num_labels, tokenizer, output_mode, tr_loss,
                  global_step, task_name, writer)
 
