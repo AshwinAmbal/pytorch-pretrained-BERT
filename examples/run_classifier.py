@@ -145,7 +145,7 @@ class QqpProcessor(DataProcessor):
 
 
 def convert_examples_to_features(examples, label_list, max_seq_length,
-                                 tokenizer, output_mode):
+                                 tokenizer, output_mode, fact_place=False):
     """Loads a data file into a list of `InputBatch`s."""
 
     label_map = {label: i for i, label in enumerate(label_list)}
@@ -160,21 +160,6 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
 
         example, column_types = example
         tokens_a = tokenizer.tokenize(example.text_a)
-
-        '''
-        temp, feature_ids_a = [], []
-        segments = [x.strip() for x in ' '.join(tokens_a).split(' [CLS] ')]
-        position_ids_a = []
-        for idx, seg in enumerate(segments):
-            cnt = 0
-            for cell in seg.split(' [SEP] '):
-                cell_tks = [x.strip() for x in cell.split() if len(x.strip()) > 0]
-                position_ids_a.extend(list(range(1, len(cell_tks)+1)))
-                cnt += len(cell_tks)
-                temp.extend(cell_tks)
-            feature_ids_a.extend([column_types[idx]]*cnt)
-        tokens_a = temp
-        #'''
 
         # assert len(feature_ids_a) == len(tokens_a) == len(position_ids_a)
         # pdb.set_trace()
@@ -208,32 +193,24 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
         # For classification tasks, the first vector (corresponding to [CLS]) is
         # used as as the "sentence vector". Note that this only makes sense because
         # the entire model is fine-tuned.
+
         # NOTE: fact is tokens_b and is now in front
-        tokens = ["[CLS]"] + tokens_b + ["[SEP]"]
-        # feature_ids = [0] * (len(tokens_b)+2)
-        # position_ids = list(range(0, len(tokens_b)+2))
-        segment_ids = [0] * (len(tokens_b) + 2)
+        if fact_place == "first":
+            tokens = ["[CLS]"] + tokens_b + ["[SEP]"]
+            segment_ids = [0] * (len(tokens_b) + 2)
 
-        # assert len(tokens) == len(feature_ids) == len(position_ids) == len(segment_ids)
-        assert len(tokens) == len(segment_ids)
+            assert len(tokens) == len(segment_ids)
 
-        tokens += tokens_a + ["[SEP]"]
-        # feature_ids += feature_ids_a + [0]
-        # position_ids += position_ids_a + [1]
-        segment_ids += [1] * (len(tokens_a) + 1)
+            tokens += tokens_a + ["[SEP]"]
+            segment_ids += [1] * (len(tokens_a) + 1)
+        else:
+            tokens = ["[CLS]"] + tokens_a + ["[SEP]"]
+            segment_ids = [0] * (len(tokens_a) + 2)
 
-        '''
-        tokens = ["[CLS]"] + tokens_a + ["[SEP]"]
-        feature_ids = [0] + feature_ids + [0]
-        position_ids = [0] + position_ids + [1]  # TODO: try using [position_ids[-1]+1]
-        segment_ids = [0] * len(tokens)
+            assert len(tokens) == len(segment_ids)
 
-        if tokens_b:
             tokens += tokens_b + ["[SEP]"]
-            feature_ids += [0] * (len(tokens_b)+1)
-            position_ids += list(range(1, len(tokens_b)+2))
             segment_ids += [1] * (len(tokens_b) + 1)
-        # '''
 
         # assert len(tokens) == len(feature_ids)
         input_ids = tokenizer.convert_tokens_to_ids(tokens)
@@ -267,8 +244,6 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
             logger.info("guid: %s" % (example.guid))
             logger.info("tokens: %s" % " ".join([str(x) for x in tokens]))
             logger.info("input_ids: %s" % " ".join([str(x) for x in input_ids]))
-            # logger.info("feature_ids: %s" % " ".join([str(x) for x in feature_ids]))
-            # logger.info("position_ids: %s" % " ".join([str(x) for x in position_ids]))
             logger.info("input_mask: %s" % " ".join([str(x) for x in input_mask]))
             logger.info("segment_ids: %s" % " ".join([str(x) for x in segment_ids]))
             logger.info("label: %s (id = %d)" % (example.label, label_id))
@@ -357,31 +332,35 @@ def main():
     parser.add_argument("--data_dir",
                         default="/mnt/bhd/hongmin/tfv_bert_output_table2sents/tsv_data",
                         type=str,
-                        # required=True,
                         help="The input data dir. Should contain the .tsv files (or other data files) for the task.")
     parser.add_argument("--bert_model",
                         default="/mnt/bhd/hongmin/bert_models/multi_cased_L-12_H-768_A-12",
                         type=str,
-                        # required=True,
                         help="Bert pre-trained model selected in the list: bert-base-uncased, "
                         "bert-large-uncased, bert-base-cased, bert-large-cased, bert-base-multilingual-uncased, "
                         "bert-base-multilingual-cased, bert-base-chinese.")
     parser.add_argument("--task_name",
                         default="QQP",
                         type=str,
-                        # required=True,
                         help="The name of the task to train.")
     parser.add_argument("--output_dir",
                         default="/mnt/bhd/hongmin/tfv_bert_output_table2sents/outputs",
                         type=str,
-                        # required=True,
                         help="The output directory where the model predictions and checkpoints will be written.")
-
+    parser.add_argument("--scan",
+                        default="vertical",
+                        choices=["vertical", "horizontal"],
+                        type=str,
+                        help="The direction of sequentializing table cells.")
     parser.add_argument("--load_dir",
                         default=None,
                         type=str,
-                        # required=True,
                         help="The output directory where the model predictions and checkpoints will be loaded.")
+    parser.add_argument("--fact",
+                        default="first",
+                        choices=["first", "second"],
+                        type=str,
+                        help="Whether to put fact in front.")
 
     ## Other parameters
     parser.add_argument("--test_set",
@@ -422,7 +401,7 @@ def main():
                         type=float,
                         help="The initial learning rate for Adam.")
     parser.add_argument("--num_train_epochs",
-                        default=20.0,
+                        default=10.0,
                         type=float,
                         help="Total number of training epochs to perform.")
     parser.add_argument("--warmup_proportion",
@@ -506,6 +485,9 @@ def main():
     if not args.do_train and not args.do_eval:
         raise ValueError("At least one of `do_train` or `do_eval` must be True.")
 
+    args.output_dir = "{}_fact-{}_{}".format(args.output_dir, args.fact, args.scan)
+    args.data_dir = "{}_{}".format(args.data_dir, args.scan)
+    logger.info("Datasets are loaded from {}\n Outputs will be saved to {}".format(args.data_dir, args.output_dir))
     if os.path.exists(args.output_dir) and os.listdir(args.output_dir) and args.do_train:
         raise ValueError("Output directory ({}) already exists and is not empty.".format(args.output_dir))
     if not os.path.exists(args.output_dir):
@@ -595,7 +577,7 @@ def main():
     tr_loss = 0
     if args.do_train:
         train_features = convert_examples_to_features(
-            train_examples, label_list, args.max_seq_length, tokenizer, output_mode)
+            train_examples, label_list, args.max_seq_length, tokenizer, output_mode, fact_place=args.fact)
         logger.info("***** Running training *****")
         logger.info("  Num examples = %d", len(train_examples))
         logger.info("  Batch size = %d", args.train_batch_size)
@@ -717,7 +699,7 @@ def evaluate(args, model, device, processor, label_list, num_labels, tokenizer, 
     if args.do_eval and (args.local_rank == -1 or torch.distributed.get_rank() == 0):
         eval_examples = processor.get_dev_examples(args.data_dir, dataset=args.test_set)
         eval_features = convert_examples_to_features(
-            eval_examples, label_list, args.max_seq_length, tokenizer, output_mode)
+            eval_examples, label_list, args.max_seq_length, tokenizer, output_mode, fact_place=args.fact)
         logger.info("***** Running evaluation *****")
         logger.info("  Num examples = %d", len(eval_examples))
         logger.info("  Batch size = %d", args.eval_batch_size)
