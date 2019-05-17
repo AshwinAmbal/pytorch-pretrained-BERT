@@ -132,7 +132,8 @@ class QqpProcessor(DataProcessor):
                 continue
             guid = "%s-%s" % (set_type, line[0])
             try:
-                column_types = [int(x) for x in line[2].split()]
+                # column_types = [int(x) for x in line[2].split()]
+                column_types = line[2].split()
                 text_a = line[3]
                 text_b = line[4]
                 label = line[5]
@@ -151,13 +152,14 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
 
     features = []
     logger.info("convert_examples_to_features ...")
-    for (ex_index, example) in enumerate(examples[:20000]):
+    for (ex_index, example) in enumerate(examples):
         if ex_index % 10000 == 0:
             logger.info("Writing example %d of %d" % (ex_index, len(examples)))
 
         example, column_types = example
         tokens_a = tokenizer.tokenize(example.text_a)
 
+        '''
         temp, feature_ids_a = [], []
         segments = [x.strip() for x in ' '.join(tokens_a).split(' [CLS] ')]
         position_ids_a = []
@@ -170,8 +172,9 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
                 temp.extend(cell_tks)
             feature_ids_a.extend([column_types[idx]]*cnt)
         tokens_a = temp
+        #'''
 
-        assert len(feature_ids_a) == len(tokens_a) == len(position_ids_a)
+        # assert len(feature_ids_a) == len(tokens_a) == len(position_ids_a)
         # pdb.set_trace()
         tokens_b = None
         if example.text_b:
@@ -179,7 +182,7 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
             # Modifies `tokens_a` and `tokens_b` in place so that the total
             # length is less than the specified length.
             # Account for [CLS], [SEP], [SEP] with "- 3"
-            _truncate_seq_pair(tokens_a, tokens_b, feature_ids_a, position_ids_a, max_seq_length - 3)
+            _truncate_seq_pair(tokens_a, tokens_b, max_seq_length - 3)
         else:
             # Account for [CLS] and [SEP] with "- 2"
             if len(tokens_a) > max_seq_length - 2:
@@ -205,15 +208,16 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
         # the entire model is fine-tuned.
         # NOTE: fact is tokens_b and is now in front
         tokens = ["[CLS]"] + tokens_b + ["[SEP]"]
-        feature_ids = [0] * (len(tokens_b)+2)
-        position_ids = list(range(0, len(tokens_b)+2))
+        # feature_ids = [0] * (len(tokens_b)+2)
+        # position_ids = list(range(0, len(tokens_b)+2))
         segment_ids = [0] * (len(tokens_b) + 2)
 
-        assert len(tokens) == len(feature_ids) == len(position_ids) == len(segment_ids)
+        # assert len(tokens) == len(feature_ids) == len(position_ids) == len(segment_ids)
+        assert len(tokens) == len(segment_ids)
 
         tokens += tokens_a + ["[SEP]"]
-        feature_ids += feature_ids_a + [0]
-        position_ids += position_ids_a + [1]
+        # feature_ids += feature_ids_a + [0]
+        # position_ids += position_ids_a + [1]
         segment_ids += [1] * (len(tokens_a) + 1)
 
         '''
@@ -229,7 +233,7 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
             segment_ids += [1] * (len(tokens_b) + 1)
         # '''
 
-        assert len(tokens) == len(feature_ids)
+        # assert len(tokens) == len(feature_ids)
         input_ids = tokenizer.convert_tokens_to_ids(tokens)
 
         # The mask has 1 for real tokens and 0 for padding tokens. Only real
@@ -238,13 +242,13 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
 
         # Zero-pad up to the sequence length.
         padding = [0] * (max_seq_length - len(input_ids))
-        feature_ids += padding
-        position_ids += padding
+        # feature_ids += padding
+        # position_ids += padding
         input_ids += padding
         input_mask += padding
         segment_ids += padding
 
-        assert len(feature_ids) == max_seq_length
+        # assert len(feature_ids) == max_seq_length
         assert len(input_ids) == max_seq_length
         assert len(input_mask) == max_seq_length
         assert len(segment_ids) == max_seq_length
@@ -261,21 +265,21 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
             logger.info("guid: %s" % (example.guid))
             logger.info("tokens: %s" % " ".join([str(x) for x in tokens]))
             logger.info("input_ids: %s" % " ".join([str(x) for x in input_ids]))
-            logger.info("feature_ids: %s" % " ".join([str(x) for x in feature_ids]))
-            logger.info("position_ids: %s" % " ".join([str(x) for x in position_ids]))
+            # logger.info("feature_ids: %s" % " ".join([str(x) for x in feature_ids]))
+            # logger.info("position_ids: %s" % " ".join([str(x) for x in position_ids]))
             logger.info("input_mask: %s" % " ".join([str(x) for x in input_mask]))
             logger.info("segment_ids: %s" % " ".join([str(x) for x in segment_ids]))
             logger.info("label: %s (id = %d)" % (example.label, label_id))
 
         features.append(
-                InputFeatures(input_ids=(input_ids, feature_ids, position_ids),
+                InputFeatures(input_ids=input_ids,
                               input_mask=input_mask,
                               segment_ids=segment_ids,
                               label_id=label_id))
     return features
 
 
-def _truncate_seq_pair(tokens_a, tokens_b, feature_ids, position_ids, max_length):
+def _truncate_seq_pair(tokens_a, tokens_b, max_length, feature_ids=None, position_ids=None):
     """Truncates a sequence pair in place to the maximum length."""
 
     # This is a simple heuristic which will always truncate the longer sequence
@@ -288,8 +292,10 @@ def _truncate_seq_pair(tokens_a, tokens_b, feature_ids, position_ids, max_length
             break
         if len(tokens_a) > len(tokens_b):
             tokens_a.pop()
-            feature_ids.pop()
-            position_ids.pop()
+            if feature_ids is not None:
+                feature_ids.pop()
+            if position_ids is not None:
+                position_ids.pop()
         else:
             tokens_b.pop()
 
@@ -331,7 +337,7 @@ def main():
 
     ## Required parameters
     parser.add_argument("--data_dir",
-                        default="/mnt/bhd/hongmin/tfv_bert_output_flat_column/tsv_data",
+                        default="/mnt/bhd/hongmin/tfv_bert_output_table2sents/tsv_data",
                         type=str,
                         # required=True,
                         help="The input data dir. Should contain the .tsv files (or other data files) for the task.")
@@ -348,7 +354,7 @@ def main():
                         # required=True,
                         help="The name of the task to train.")
     parser.add_argument("--output_dir",
-                        default="/mnt/bhd/hongmin/tfv_bert_output_small_table/outputs",
+                        default="/mnt/bhd/hongmin/tfv_bert_output_table2sents/outputs",
                         type=str,
                         # required=True,
                         help="The output directory where the model predictions and checkpoints will be written.")
@@ -565,9 +571,10 @@ def main():
         logger.info("  Num examples = %d", len(train_examples))
         logger.info("  Batch size = %d", args.train_batch_size)
         logger.info("  Num steps = %d", num_train_optimization_steps)
-        all_input_ids = torch.tensor([f.input_ids[0] for f in train_features], dtype=torch.long)
-        all_feature_ids = torch.tensor([f.input_ids[1] for f in train_features], dtype=torch.long)
-        all_position_ids = torch.tensor([f.input_ids[2] for f in train_features], dtype=torch.long)
+        # all_input_ids = torch.tensor([f.input_ids[0] for f in train_features], dtype=torch.long)
+        # all_position_ids = torch.tensor([f.input_ids[2] for f in train_features], dtype=torch.long)
+        # all_feature_ids = torch.tensor([f.input_ids[1] for f in train_features], dtype=torch.long)
+        all_input_ids = torch.tensor([f.input_ids for f in train_features], dtype=torch.long)
         all_input_mask = torch.tensor([f.input_mask for f in train_features], dtype=torch.long)
         all_segment_ids = torch.tensor([f.segment_ids for f in train_features], dtype=torch.long)
 
@@ -576,7 +583,8 @@ def main():
         elif output_mode == "regression":
             all_label_ids = torch.tensor([f.label_id for f in train_features], dtype=torch.float)
 
-        train_data = TensorDataset(all_input_ids, all_feature_ids, all_position_ids, all_input_mask, all_segment_ids, all_label_ids)
+        # train_data = TensorDataset(all_input_ids, all_feature_ids, all_position_ids, all_input_mask, all_segment_ids, all_label_ids)
+        train_data = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_label_ids)
         if args.local_rank == -1:
             train_sampler = RandomSampler(train_data)
         else:
@@ -589,10 +597,11 @@ def main():
             nb_tr_examples, nb_tr_steps = 0, 0
             for step, batch in enumerate(tqdm(train_dataloader, desc="Iteration")):
                 batch = tuple(t.to(device) for t in batch)
-                input_ids, feature_ids, position_ids, input_mask, segment_ids, label_ids = batch
+                # input_ids, feature_ids, position_ids, input_mask, segment_ids, label_ids = batch
+                input_ids, input_mask, segment_ids, label_ids = batch
 
                 # define a new function to compute loss values for both output_modes
-                logits = model((input_ids, feature_ids, position_ids), segment_ids, input_mask, labels=None)
+                logits = model(input_ids, segment_ids, input_mask, labels=None)
 
                 if output_mode == "classification":
                     loss_fct = CrossEntropyLoss()
@@ -628,38 +637,30 @@ def main():
                         # modify learning rate with special warm up BERT uses
                         # if args.fp16 is False, BertAdam is used that handles this automatically
                         lr_this_step = args.learning_rate * warmup_linear.get_lr(global_step, args.warmup_proportion)
-                        writer.add_scalar('train/lr', lr_this_step, global_step)
                         for param_group in optimizer.param_groups:
                             param_group['lr'] = lr_this_step
                     optimizer.step()
                     optimizer.zero_grad()
+                    model.zero_grad()
                     global_step += 1
 
                 if (step + 1) % args.period == 0:
-                    if args.do_train and (args.local_rank == -1 or torch.distributed.get_rank() == 0):
-                        # Save a trained model, configuration and tokenizer
-                        model_to_save = model.module if hasattr(model,
-                                                                'module') else model  # Only save the model it-self
+                    # Save a trained model, configuration and tokenizer
+                    model_to_save = model.module if hasattr(model,
+                                                            'module') else model  # Only save the model it-self
 
-                        # If we save using the predefined names, we can load using `from_pretrained`
+                    # If we save using the predefined names, we can load using `from_pretrained`
 
-                        output_dir = os.path.join(args.output_dir, 'save_step_{}'.format(global_step))
-                        if not os.path.exists(output_dir):
-                            os.makedirs(output_dir)
+                    output_dir = os.path.join(args.output_dir, 'save_step_{}'.format(global_step))
+                    if not os.path.exists(output_dir):
+                        os.makedirs(output_dir)
 
-                        output_model_file = os.path.join(output_dir, WEIGHTS_NAME)
-                        output_config_file = os.path.join(output_dir, CONFIG_NAME)
+                    output_model_file = os.path.join(output_dir, WEIGHTS_NAME)
+                    output_config_file = os.path.join(output_dir, CONFIG_NAME)
 
-                        torch.save(model_to_save.state_dict(), output_model_file)
-                        model_to_save.config.to_json_file(output_config_file)
-                        tokenizer.save_vocabulary(output_dir)
-
-                        # Load a trained model and vocabulary that you have fine-tuned
-                        model = BertForSequenceClassification.from_pretrained(output_dir, num_labels=num_labels)
-                        tokenizer = BertTokenizer.from_pretrained(output_dir, do_lower_case=args.do_lower_case)
-                    else:
-                        model = BertForSequenceClassification.from_pretrained(args.bert_model, num_labels=num_labels)
-                    model.to(device)
+                    torch.save(model_to_save.state_dict(), output_model_file)
+                    model_to_save.config.to_json_file(output_config_file)
+                    tokenizer.save_vocabulary(output_dir)
 
                     model.eval()
                     torch.set_grad_enabled(False)  # turn off gradient tracking
@@ -671,6 +672,10 @@ def main():
 
     # do eval before exit
     if args.do_eval:
+        if not args.do_train:
+            # Load a trained model and vocabulary that you have fine-tuned
+            model = BertForSequenceClassification.from_pretrained(output_dir, num_labels=num_labels)
+            tokenizer = BertTokenizer.from_pretrained(output_dir, do_lower_case=args.do_lower_case)
         evaluate(args, model, device, processor, label_list, num_labels, tokenizer, output_mode, tr_loss,
                  global_step, task_name, writer)
 
@@ -684,9 +689,10 @@ def evaluate(args, model, device, processor, label_list, num_labels, tokenizer, 
         logger.info("***** Running evaluation *****")
         logger.info("  Num examples = %d", len(eval_examples))
         logger.info("  Batch size = %d", args.eval_batch_size)
-        all_input_ids = torch.tensor([f.input_ids[0] for f in eval_features], dtype=torch.long)
-        all_feature_ids = torch.tensor([f.input_ids[1] for f in eval_features], dtype=torch.long)
-        all_position_ids = torch.tensor([f.input_ids[2] for f in eval_features], dtype=torch.long)
+        # all_input_ids = torch.tensor([f.input_ids[0] for f in eval_features], dtype=torch.long)
+        # all_feature_ids = torch.tensor([f.input_ids[1] for f in eval_features], dtype=torch.long)
+        # all_position_ids = torch.tensor([f.input_ids[2] for f in eval_features], dtype=torch.long)
+        all_input_ids = torch.tensor([f.input_ids for f in eval_features], dtype=torch.long)
         all_input_mask = torch.tensor([f.input_mask for f in eval_features], dtype=torch.long)
         all_segment_ids = torch.tensor([f.segment_ids for f in eval_features], dtype=torch.long)
 
@@ -695,7 +701,8 @@ def evaluate(args, model, device, processor, label_list, num_labels, tokenizer, 
         elif output_mode == "regression":
             all_label_ids = torch.tensor([f.label_id for f in eval_features], dtype=torch.float)
 
-        eval_data = TensorDataset(all_input_ids, all_feature_ids, all_position_ids, all_input_mask, all_segment_ids, all_label_ids)
+        # eval_data = TensorDataset(all_input_ids, all_feature_ids, all_position_ids, all_input_mask, all_segment_ids, all_label_ids)
+        eval_data = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_label_ids)
         # Run prediction for full data
         eval_sampler = SequentialSampler(eval_data)
         eval_dataloader = DataLoader(eval_data, sampler=eval_sampler, batch_size=args.eval_batch_size)
@@ -704,16 +711,17 @@ def evaluate(args, model, device, processor, label_list, num_labels, tokenizer, 
         nb_eval_steps = 0
         preds = []
 
-        for input_ids, feature_ids, position_ids, input_mask, segment_ids, label_ids in tqdm(eval_dataloader, desc="Evaluating"):
+        # for input_ids, feature_ids, position_ids, input_mask, segment_ids, label_ids in tqdm(eval_dataloader, desc="Evaluating"):
+        for input_ids, input_mask, segment_ids, label_ids in tqdm(eval_dataloader, desc="Evaluating"):
             input_ids = input_ids.to(device)
-            feature_ids = feature_ids.to(device)
-            position_ids = position_ids.to(device)
+            # feature_ids = feature_ids.to(device)
+            # position_ids = position_ids.to(device)
             input_mask = input_mask.to(device)
             segment_ids = segment_ids.to(device)
             label_ids = label_ids.to(device)
 
             with torch.no_grad():
-                logits = model((input_ids, feature_ids, position_ids), segment_ids, input_mask, labels=None)
+                logits = model(input_ids, segment_ids, input_mask, labels=None)
 
             # create eval loss and other metric required by the task
             if output_mode == "classification":

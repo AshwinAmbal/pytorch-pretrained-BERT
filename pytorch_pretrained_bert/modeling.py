@@ -259,7 +259,7 @@ class BertEmbeddings(nn.Module):
         self.position_embeddings = nn.Embedding(config.max_position_embeddings, config.hidden_size)
         self.token_type_embeddings = nn.Embedding(config.type_vocab_size, config.hidden_size)
         # feature_embeddings initialized with 0s
-        self.feature_embeddings = nn.Embedding(config.max_feature_embeddings, config.hidden_size, padding_idx=0)
+        # self.feature_embeddings = nn.Embedding(config.max_feature_embeddings, config.hidden_size, padding_idx=0)
         # self.feature_embeddings.weight.data.fill_(0)
 
         # self.LayerNorm is not snake-cased to stick with TensorFlow model variable name and be able to load
@@ -268,19 +268,19 @@ class BertEmbeddings(nn.Module):
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
     def forward(self, input_ids, token_type_ids=None):
-        input_ids, feature_ids, position_ids = input_ids
-        # seq_length = input_ids.size(1)
-        # position_ids = torch.arange(seq_length, dtype=torch.long, device=input_ids.device)
-        # position_ids = position_ids.unsqueeze(0).expand_as(input_ids)
+        # input_ids, feature_ids, position_ids = input_ids
+        seq_length = input_ids.size(1)
+        position_ids = torch.arange(seq_length, dtype=torch.long, device=input_ids.device)
+        position_ids = position_ids.unsqueeze(0).expand_as(input_ids)
         if token_type_ids is None:
             token_type_ids = torch.zeros_like(input_ids)
 
         words_embeddings = self.word_embeddings(input_ids)
         position_embeddings = self.position_embeddings(position_ids)
-        feature_embeddings = self.feature_embeddings(feature_ids)
+        # feature_embeddings = self.feature_embeddings(feature_ids)
         token_type_embeddings = self.token_type_embeddings(token_type_ids)
 
-        embeddings = words_embeddings + position_embeddings + token_type_embeddings + feature_embeddings
+        embeddings = words_embeddings + position_embeddings + token_type_embeddings  # + feature_embeddings
         embeddings = self.LayerNorm(embeddings)
         embeddings = self.dropout(embeddings)
         return embeddings
@@ -720,7 +720,7 @@ class BertModel(BertPreTrainedModel):
         self.apply(self.init_bert_weights)
 
     def forward(self, input_ids, token_type_ids=None, attention_mask=None, output_all_encoded_layers=True):
-        input_ids, feature_ids, position_ids = input_ids
+        # input_ids, feature_ids, position_ids = input_ids
         if attention_mask is None:
             attention_mask = torch.ones_like(input_ids)
         if token_type_ids is None:
@@ -741,7 +741,7 @@ class BertModel(BertPreTrainedModel):
         extended_attention_mask = extended_attention_mask.to(dtype=next(self.parameters()).dtype) # fp16 compatibility
         extended_attention_mask = (1.0 - extended_attention_mask) * -10000.0
 
-        input_ids = (input_ids, feature_ids, position_ids)
+        # input_ids = (input_ids, feature_ids, position_ids)
         embedding_output = self.embeddings(input_ids, token_type_ids)
         encoded_layers = self.encoder(embedding_output,
                                       extended_attention_mask,
