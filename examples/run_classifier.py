@@ -326,6 +326,8 @@ def compute_metrics(task_name, preds, labels):
 
 
 def main():
+    logger.info("Running %s" % ' '.join(sys.argv))
+
     parser = argparse.ArgumentParser()
 
     ## Required parameters
@@ -374,7 +376,7 @@ def main():
                         type=str,
                         help="Where do you want to store the pre-trained models downloaded from s3")
     parser.add_argument("--max_seq_length",
-                        default=384,
+                        default=512,
                         type=int,
                         help="The maximum total input sequence length after WordPiece tokenization. \n"
                              "Sequences longer than this will be truncated, and sequences shorter \n"
@@ -401,7 +403,7 @@ def main():
                         type=float,
                         help="The initial learning rate for Adam.")
     parser.add_argument("--num_train_epochs",
-                        default=10.0,
+                        default=20.0,
                         type=float,
                         help="Total number of training epochs to perform.")
     parser.add_argument("--warmup_proportion",
