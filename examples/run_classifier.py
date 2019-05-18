@@ -693,10 +693,11 @@ def main():
             # Load a trained model and vocabulary that you have fine-tuned
             # model = BertForSequenceClassification.from_pretrained(args.load_dir, num_labels=num_labels)
         evaluate(args, model, device, processor, label_list, num_labels, tokenizer, output_mode, tr_loss,
-                 global_step, task_name, writer)
+                 global_step, task_name)
 
 
-def evaluate(args, model, device, processor, label_list, num_labels, tokenizer, output_mode, tr_loss, global_step, task_name, tbwriter):
+def evaluate(args, model, device, processor, label_list, num_labels, tokenizer, output_mode, tr_loss, global_step,
+             task_name, tbwriter=None):
 
     if args.do_eval and (args.local_rank == -1 or torch.distributed.get_rank() == 0):
         eval_examples = processor.get_dev_examples(args.data_dir, dataset=args.test_set)
@@ -772,7 +773,7 @@ def evaluate(args, model, device, processor, label_list, num_labels, tokenizer, 
         with open(output_eval_file, "w") as writer:
             logger.info("***** Eval results *****")
             for key in sorted(result.keys()):
-                if result[key] is not None:
+                if result[key] is not None and tbwriter is not None:
                     tbwriter.add_scalar('{}/{}'.format(args.test_set, key), result[key], global_step)
                 logger.info("  %s = %s", key, str(result[key]))
                 writer.write("%s = %s\n" % (key, str(result[key])))
