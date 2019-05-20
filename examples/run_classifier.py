@@ -687,7 +687,7 @@ def main():
                     model.eval()
                     torch.set_grad_enabled(False)  # turn off gradient tracking
                     evaluate(args, model, device, processor, label_list, num_labels, tokenizer, output_mode, tr_loss,
-                             global_step, task_name, writer)
+                             global_step, task_name, tbwriter=writer, output_dir=output_dir)
                     model.train()  # turn on train mode
                     torch.set_grad_enabled(True)  # start gradient tracking
                     tr_loss = 0
@@ -702,7 +702,7 @@ def main():
 
 
 def evaluate(args, model, device, processor, label_list, num_labels, tokenizer, output_mode, tr_loss, global_step,
-             task_name, tbwriter=None):
+             task_name, tbwriter=None, output_dir=None):
 
     if args.do_eval and (args.local_rank == -1 or torch.distributed.get_rank() == 0):
         eval_examples = processor.get_dev_examples(args.data_dir, dataset=args.test_set)
@@ -768,7 +768,7 @@ def evaluate(args, model, device, processor, label_list, num_labels, tokenizer, 
             end = start+len(labels)
             # end = min((batch_idx+1)*args.eval_batch_size, len(eval_examples))
             batch_range = list(range(start, end))
-            csv_names = [eval_examples[i][0].guid.strip("{}-".format(args.test_set)) for i in batch_range]
+            csv_names = [eval_examples[i][0].guid.replace("{}-".format(args.test_set), "") for i in batch_range]
             facts = [eval_examples[i][0].text_b for i in batch_range]
             labels = label_ids.detach().cpu().numpy().tolist()
             # try:
@@ -797,7 +797,8 @@ def evaluate(args, model, device, processor, label_list, num_labels, tokenizer, 
             else:
                 evaluation_results[c].append({'fact': f, 'gold': int(l), 'pred': int(y)})
 
-        output_eval_file = os.path.join(args.load_dir, "{}_eval_results.json".format(args.test_set))
+        save_dir = output_dir if output_dir is not None else args.load_dir
+        output_eval_file = os.path.join(save_dir, "{}_eval_results.json".format(args.test_set))
         with io.open(output_eval_file, "w", encoding='utf-8') as fout:
             json.dump(evaluation_results, fout, sort_keys=True, indent=4)
 
