@@ -16,7 +16,7 @@
 """BERT finetuning runner."""
 
 from __future__ import absolute_import, division, print_function
-from collections import Counter
+from collections import Counter, OrderedDict
 import argparse
 import csv
 import logging
@@ -24,6 +24,8 @@ import os
 import random
 import sys
 import pdb
+import io
+import json
 
 import numpy as np
 import torch
@@ -145,9 +147,9 @@ class QqpProcessor(DataProcessor):
 
 
 def convert_examples_to_features(examples, label_list, max_seq_length,
-                                 tokenizer, output_mode, fact_place=False):
+                                 tokenizer, output_mode, fact_place=None, balance=False):
     """Loads a data file into a list of `InputBatch`s."""
-
+    assert fact_place is not None
     label_map = {label: i for i, label in enumerate(label_list)}
 
     features = []
@@ -247,28 +249,29 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
             logger.info("input_mask: %s" % " ".join([str(x) for x in input_mask]))
             logger.info("segment_ids: %s" % " ".join([str(x) for x in segment_ids]))
             logger.info("label: %s (id = %d)" % (example.label, label_id))
-        
-        if label_id == 1:
-            pos_buf.append(InputFeatures(input_ids=input_ids,
-                              input_mask=input_mask,
-                              segment_ids=segment_ids,
-                              label_id=label_id))
-        else:
-            neg_buf.append(InputFeatures(input_ids=input_ids,
-                              input_mask=input_mask,
-                              segment_ids=segment_ids,
-                              label_id=label_id))
 
-        if len(pos_buf) > 0 and len(neg_buf) > 0:
-            features.append(pos_buf.pop(0))
-            features.append(neg_buf.pop(0))
-        """
-        features.append(
+        if balance:
+            if label_id == 1:
+                pos_buf.append(InputFeatures(input_ids=input_ids,
+                               input_mask=input_mask,
+                               segment_ids=segment_ids,
+                               label_id=label_id))
+            else:
+                neg_buf.append(InputFeatures(input_ids=input_ids,
+                               input_mask=input_mask,
+                               segment_ids=segment_ids,
+                               label_id=label_id))
+
+            if len(pos_buf) > 0 and len(neg_buf) > 0:
+                features.append(pos_buf.pop(0))
+                features.append(neg_buf.pop(0))
+        else:
+            features.append(
                 InputFeatures(input_ids=input_ids,
                               input_mask=input_mask,
                               segment_ids=segment_ids,
                               label_id=label_id))
-        """
+
     return features
 
 
@@ -329,26 +332,14 @@ def main():
     logger.info("Running %s" % ' '.join(sys.argv))
 
     parser = argparse.ArgumentParser()
-
+    my_root_dir = "/scratch/home"
     ## Required parameters
-    parser.add_argument("--data_dir",
-                        default="/mnt/bhd/hongmin/tfv_bert_output_table2sents/tsv_data",
-                        type=str,
-                        help="The input data dir. Should contain the .tsv files (or other data files) for the task.")
-    parser.add_argument("--bert_model",
-                        default="/mnt/bhd/hongmin/bert_models/multi_cased_L-12_H-768_A-12",
-                        type=str,
-                        help="Bert pre-trained model selected in the list: bert-base-uncased, "
-                        "bert-large-uncased, bert-base-cased, bert-large-cased, bert-base-multilingual-uncased, "
-                        "bert-base-multilingual-cased, bert-base-chinese.")
-    parser.add_argument("--task_name",
-                        default="QQP",
-                        type=str,
-                        help="The name of the task to train.")
-    parser.add_argument("--output_dir",
-                        default="/mnt/bhd/hongmin/tfv_bert_output_table2sents/outputs",
-                        type=str,
-                        help="The output directory where the model predictions and checkpoints will be written.")
+    parser.add_argument("--do_train",
+                        action='store_true',
+                        help="Whether to run training.")
+    parser.add_argument("--do_eval",
+                        action='store_true',
+                        help="Whether to run eval on the dev set.")
     parser.add_argument("--scan",
                         default="vertical",
                         choices=["vertical", "horizontal"],
@@ -363,11 +354,35 @@ def main():
                         choices=["first", "second"],
                         type=str,
                         help="Whether to put fact in front.")
-
-    ## Other parameters
     parser.add_argument("--test_set",
                         default="dev",
                         type=str)
+    parser.add_argument("--eval_batch_size",
+                        default=8,
+                        type=int,
+                        help="Total batch size for eval.")
+    parser.add_argument("--balance",
+                        action='store_true',
+                        help="balance between + and - samples for training.")
+    ## Other parameters
+    parser.add_argument("--data_dir",
+                        default="{}/hongmin/tfv_bert_output_table2sents/tsv_data".format(my_root_dir),
+                        type=str,
+                        help="The input data dir. Should contain the .tsv files (or other data files) for the task.")
+    parser.add_argument("--bert_model",
+                        default="{}/hongmin/bert_models/multi_cased_L-12_H-768_A-12".format(my_root_dir),
+                        type=str,
+                        help="Bert pre-trained model selected in the list: bert-base-uncased, "
+                        "bert-large-uncased, bert-base-cased, bert-large-cased, bert-base-multilingual-uncased, "
+                        "bert-base-multilingual-cased, bert-base-chinese.")
+    parser.add_argument("--task_name",
+                        default="QQP",
+                        type=str,
+                        help="The name of the task to train.")
+    parser.add_argument("--output_dir",
+                        default="tmp",
+                        type=str,
+                        help="The output directory where the model predictions and checkpoints will be written.")
     parser.add_argument('--period',
                         type=int,
                         default=500)
@@ -381,12 +396,6 @@ def main():
                         help="The maximum total input sequence length after WordPiece tokenization. \n"
                              "Sequences longer than this will be truncated, and sequences shorter \n"
                              "than this will be padded.")
-    parser.add_argument("--do_train",
-                        action='store_true',
-                        help="Whether to run training.")
-    parser.add_argument("--do_eval",
-                        action='store_true',
-                        help="Whether to run eval on the dev set.")
     parser.add_argument("--do_lower_case",
                         action='store_true',
                         help="Set this flag if you are using an uncased model.")
@@ -394,10 +403,6 @@ def main():
                         default=6,
                         type=int,
                         help="Total batch size for training.")
-    parser.add_argument("--eval_batch_size",
-                        default=8,
-                        type=int,
-                        help="Total batch size for eval.")
     parser.add_argument("--learning_rate",
                         default=5e-5,
                         type=float,
@@ -579,7 +584,7 @@ def main():
     tr_loss = 0
     if args.do_train:
         train_features = convert_examples_to_features(
-            train_examples, label_list, args.max_seq_length, tokenizer, output_mode, fact_place=args.fact)
+            train_examples, label_list, args.max_seq_length, tokenizer, output_mode, fact_place=args.fact, balance=args.balance)
         logger.info("***** Running training *****")
         logger.info("  Num examples = %d", len(train_examples))
         logger.info("  Batch size = %d", args.train_batch_size)
@@ -702,7 +707,7 @@ def evaluate(args, model, device, processor, label_list, num_labels, tokenizer, 
     if args.do_eval and (args.local_rank == -1 or torch.distributed.get_rank() == 0):
         eval_examples = processor.get_dev_examples(args.data_dir, dataset=args.test_set)
         eval_features = convert_examples_to_features(
-            eval_examples, label_list, args.max_seq_length, tokenizer, output_mode, fact_place=args.fact)
+            eval_examples, label_list, args.max_seq_length, tokenizer, output_mode, fact_place=args.fact, balance=False)
         logger.info("***** Running evaluation *****")
         logger.info("  Num examples = %d", len(eval_examples))
         logger.info("  Batch size = %d", args.eval_batch_size)
@@ -724,9 +729,11 @@ def evaluate(args, model, device, processor, label_list, num_labels, tokenizer, 
         eval_sampler = SequentialSampler(eval_data)
         eval_dataloader = DataLoader(eval_data, sampler=eval_sampler, batch_size=args.eval_batch_size)
 
+        batch_idx = 0
         eval_loss = 0
         nb_eval_steps = 0
         preds = []
+        temp = []
 
         # for input_ids, feature_ids, position_ids, input_mask, segment_ids, label_ids in tqdm(eval_dataloader, desc="Evaluating"):
         for input_ids, input_mask, segment_ids, label_ids in tqdm(eval_dataloader, desc="Evaluating"):
@@ -756,12 +763,44 @@ def evaluate(args, model, device, processor, label_list, num_labels, tokenizer, 
                 preds[0] = np.append(
                     preds[0], logits.detach().cpu().numpy(), axis=0)
 
+            labels = label_ids.detach().cpu().numpy().tolist()
+            start = batch_idx*args.eval_batch_size
+            end = start+len(labels)
+            # end = min((batch_idx+1)*args.eval_batch_size, len(eval_examples))
+            batch_range = list(range(start, end))
+            csv_names = [eval_examples[i][0].guid.strip("{}-".format(args.test_set)) for i in batch_range]
+            facts = [eval_examples[i][0].text_b for i in batch_range]
+            labels = label_ids.detach().cpu().numpy().tolist()
+            # try:
+            assert len(csv_names) == len(facts) == len(labels)
+            # except AssertionError:
+            #     print(len(csv_names))
+            #     print(len(facts))
+            #     print(len(labels))
+            #     sys.exit(1)
+
+            temp.extend([(x, y, z) for x, y, z in zip(csv_names, facts, labels)])
+            batch_idx += 1
+
         eval_loss = eval_loss / nb_eval_steps
         preds = preds[0]
         if output_mode == "classification":
             preds = np.argmax(preds, axis=1)
         elif output_mode == "regression":
             preds = np.squeeze(preds)
+
+        evaluation_results = OrderedDict()
+        for x, y in zip(temp, preds):
+            c, f, l = x
+            if not c in evaluation_results:
+                evaluation_results[c] = [{'fact': f, 'gold': int(l), 'pred': int(y)}]
+            else:
+                evaluation_results[c].append({'fact': f, 'gold': int(l), 'pred': int(y)})
+
+        output_eval_file = os.path.join(args.load_dir, "{}_eval_results.json".format(args.test_set))
+        with io.open(output_eval_file, "w", encoding='utf-8') as fout:
+            json.dump(evaluation_results, fout, sort_keys=True, indent=4)
+
         result = compute_metrics(task_name, preds, all_label_ids.numpy())
         loss = tr_loss/args.period if args.do_train and global_step > 0 else None
 
@@ -769,9 +808,10 @@ def evaluate(args, model, device, processor, label_list, num_labels, tokenizer, 
         result['global_step'] = global_step
         result['loss'] = loss
 
-        output_eval_file = os.path.join(args.output_dir, "eval_results.txt")
-        with open(output_eval_file, "w") as writer:
-            logger.info("***** Eval results *****")
+        output_eval_metrics = os.path.join(args.output_dir, "eval_metrics.txt")
+        with open(output_eval_metrics, "a") as writer:
+            logger.info("***** Eval results {}*****".format(args.test_set))
+            writer.write("***** Eval results {}*****\n".format(args.test_set))
             for key in sorted(result.keys()):
                 if result[key] is not None and tbwriter is not None:
                     tbwriter.add_scalar('{}/{}'.format(args.test_set, key), result[key], global_step)
@@ -781,8 +821,3 @@ def evaluate(args, model, device, processor, label_list, num_labels, tokenizer, 
 
 if __name__ == "__main__":
     main()
-
-# TODO:
-# (1) eval on train
-# (2) save: prediction output
-# (3) finetune masked-LM before finetuning classification
