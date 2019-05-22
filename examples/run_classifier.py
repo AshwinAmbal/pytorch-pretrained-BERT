@@ -163,8 +163,6 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
         example, column_types = example
         tokens_a = tokenizer.tokenize(example.text_a)
 
-        # assert len(feature_ids_a) == len(tokens_a) == len(position_ids_a)
-        # pdb.set_trace()
         tokens_b = None
         if example.text_b:
             tokens_b = tokenizer.tokenize(example.text_b)
@@ -214,7 +212,6 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
             tokens += tokens_b + ["[SEP]"]
             segment_ids += [1] * (len(tokens_b) + 1)
 
-        # assert len(tokens) == len(feature_ids)
         input_ids = tokenizer.convert_tokens_to_ids(tokens)
 
         # The mask has 1 for real tokens and 0 for padding tokens. Only real
@@ -223,13 +220,10 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
 
         # Zero-pad up to the sequence length.
         padding = [0] * (max_seq_length - len(input_ids))
-        # feature_ids += padding
-        # position_ids += padding
         input_ids += padding
         input_mask += padding
         segment_ids += padding
 
-        # assert len(feature_ids) == max_seq_length
         assert len(input_ids) == max_seq_length
         assert len(input_mask) == max_seq_length
         assert len(segment_ids) == max_seq_length
@@ -275,7 +269,7 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
     return features
 
 
-def _truncate_seq_pair(tokens_a, tokens_b, max_length, feature_ids=None, position_ids=None):
+def _truncate_seq_pair(tokens_a, tokens_b, max_length):
     """Truncates a sequence pair in place to the maximum length."""
 
     # This is a simple heuristic which will always truncate the longer sequence
@@ -288,10 +282,6 @@ def _truncate_seq_pair(tokens_a, tokens_b, max_length, feature_ids=None, positio
             break
         if len(tokens_a) > len(tokens_b):
             tokens_a.pop()
-            if feature_ids is not None:
-                feature_ids.pop()
-            if position_ids is not None:
-                position_ids.pop()
         else:
             tokens_b.pop()
 
@@ -332,8 +322,6 @@ def main():
     logger.info("Running %s" % ' '.join(sys.argv))
 
     parser = argparse.ArgumentParser()
-    # my_root_dir = "/scratch/home"
-    my_root_dir = "/mnt/bhd"
     ## Required parameters
     parser.add_argument("--do_train",
                         action='store_true',
@@ -345,11 +333,11 @@ def main():
                         default="vertical",
                         choices=["vertical", "horizontal"],
                         type=str,
-                        help="The direction of sequentializing table cells.")
+                        help="The direction of linearizing table cells.")
     parser.add_argument("--load_dir",
                         default=None,
                         type=str,
-                        help="The output directory where the model predictions and checkpoints will be loaded.")
+                        help="The output directory where the model checkpoints will be loaded during evaluation")
     parser.add_argument('--load_step',
                         type=int,
                         default=0,
@@ -361,6 +349,8 @@ def main():
                         help="Whether to put fact in front.")
     parser.add_argument("--test_set",
                         default="dev",
+                        choices=["dev", "test", "simple_test", "complex_test", "small_test"],
+                        help="Which test set is used for evaluation",
                         type=str)
     parser.add_argument("--eval_batch_size",
                         default=8,
@@ -371,11 +361,11 @@ def main():
                         help="balance between + and - samples for training.")
     ## Other parameters
     parser.add_argument("--data_dir",
-                        default="{}/hongmin/tfv_bert_output_table2sents/tsv_data".format(my_root_dir),
+                        default="",
                         type=str,
                         help="The input data dir. Should contain the .tsv files (or other data files) for the task.")
     parser.add_argument("--bert_model",
-                        default="{}/hongmin/bert_models/multi_cased_L-12_H-768_A-12".format(my_root_dir),
+                        default="bert-base-multilingual-cased",
                         type=str,
                         help="Bert pre-trained model selected in the list: bert-base-uncased, "
                         "bert-large-uncased, bert-base-cased, bert-large-cased, bert-base-multilingual-uncased, "
@@ -449,13 +439,6 @@ def main():
     args = parser.parse_args()
     pprint(vars(args))
     sys.stdout.flush()
-    if args.do_eval and not args.do_train:
-        if args.load_dir is None:
-            if args.load_step > 0:
-                args.load_dir = "/mnt/bhd/hongmin/tfv_bert_output_table2sents/outputs_fact-{}_{}/save_step_{}"\
-                    .format(args.fact, args.scan, args.load_step)
-            else:
-                args.load_dir = glob.glob("/mnt/bhd/hongmin/tfv_bert_output_table2sents/outputs_fact-{}_{}/best_model/save_step_*".format(args.fact, args.scan))[0]
 
     if args.server_ip and args.server_port:
         # Distant debugging - see https://code.visualstudio.com/docs/python/debugging#_attach-to-a-local-script
@@ -526,7 +509,6 @@ def main():
 
     tokenizer = BertTokenizer.from_pretrained(args.bert_model, do_lower_case=args.do_lower_case)
 
-    # NOTE: Read data
     train_examples = None
     num_train_optimization_steps = None
     if args.do_train:
@@ -536,14 +518,12 @@ def main():
         if args.local_rank != -1:
             num_train_optimization_steps = num_train_optimization_steps // torch.distributed.get_world_size()
 
-    # NOTE: Prepare model
     cache_dir = args.cache_dir if args.cache_dir else os.path.join(str(PYTORCH_PRETRAINED_BERT_CACHE), 'distributed_{}'.format(args.local_rank))
     if args.load_dir:
         load_dir = args.load_dir
     else:
         load_dir = args.bert_model
 
-    # NOTE: Main Entrance to BERT Model
     model = BertForSequenceClassification.from_pretrained(load_dir,
                                                           cache_dir=cache_dir,
                                                           num_labels=num_labels)
@@ -602,9 +582,6 @@ def main():
         logger.info("  Num examples = %d", len(train_examples))
         logger.info("  Batch size = %d", args.train_batch_size)
         logger.info("  Num steps = %d", num_train_optimization_steps)
-        # all_input_ids = torch.tensor([f.input_ids[0] for f in train_features], dtype=torch.long)
-        # all_position_ids = torch.tensor([f.input_ids[2] for f in train_features], dtype=torch.long)
-        # all_feature_ids = torch.tensor([f.input_ids[1] for f in train_features], dtype=torch.long)
         all_input_ids = torch.tensor([f.input_ids for f in train_features], dtype=torch.long)
         all_input_mask = torch.tensor([f.input_mask for f in train_features], dtype=torch.long)
         all_segment_ids = torch.tensor([f.segment_ids for f in train_features], dtype=torch.long)
@@ -614,7 +591,6 @@ def main():
         elif output_mode == "regression":
             all_label_ids = torch.tensor([f.label_id for f in train_features], dtype=torch.float)
 
-        # train_data = TensorDataset(all_input_ids, all_feature_ids, all_position_ids, all_input_mask, all_segment_ids, all_label_ids)
         train_data = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_label_ids)
         if args.local_rank == -1:
             train_sampler = RandomSampler(train_data)
@@ -627,9 +603,7 @@ def main():
             logger.info("Training epoch {} ...".format(epoch))
             nb_tr_examples, nb_tr_steps = 0, 0
             for step, batch in enumerate(tqdm(train_dataloader, desc="Iteration")):
-            # for step, batch in enumerate(train_dataloader):
                 batch = tuple(t.to(device) for t in batch)
-                # input_ids, feature_ids, position_ids, input_mask, segment_ids, label_ids = batch
                 input_ids, input_mask, segment_ids, label_ids = batch
 
                 # define a new function to compute loss values for both output_modes
@@ -643,7 +617,7 @@ def main():
                     loss = loss_fct(logits.view(-1), label_ids.view(-1))
 
                 if n_gpu > 1:
-                    loss = loss.mean() # mean() to average on multi-gpu.
+                    loss = loss.mean()  # mean() to average on multi-gpu.
                 if args.gradient_accumulation_steps > 1:
                     loss = loss / args.gradient_accumulation_steps
 
@@ -666,7 +640,6 @@ def main():
                     total_norm = total_norm ** (1. / 2)
                     preds = torch.argmax(logits, -1) == label_ids
                     acc = torch.sum(preds).float() / preds.size(0)
-                    # print(step, loss.item(), acc.item(), label_ids.cpu().data.numpy(), torch.argmax(logits, -1).cpu().data.numpy())
                     writer.add_scalar('train/gradient_norm', total_norm, global_step)
                     if args.fp16:
                         # modify learning rate with special warm up BERT uses
@@ -707,9 +680,6 @@ def main():
 
     # do eval before exit
     if args.do_eval:
-        # if not args.do_train:
-            # Load a trained model and vocabulary that you have fine-tuned
-            # model = BertForSequenceClassification.from_pretrained(args.load_dir, num_labels=num_labels)
         parent_dir = os.path.dirname(args.load_dir)
         tbwriter = SummaryWriter(os.path.join(parent_dir, 'eval/events'))
         load_step = int(os.path.basename(args.load_dir).replace('save_step_', ''))
@@ -728,9 +698,6 @@ def evaluate(args, model, device, processor, label_list, num_labels, tokenizer, 
         logger.info("***** Running evaluation *****")
         logger.info("  Num examples = %d", len(eval_examples))
         logger.info("  Batch size = %d", args.eval_batch_size)
-        # all_input_ids = torch.tensor([f.input_ids[0] for f in eval_features], dtype=torch.long)
-        # all_feature_ids = torch.tensor([f.input_ids[1] for f in eval_features], dtype=torch.long)
-        # all_position_ids = torch.tensor([f.input_ids[2] for f in eval_features], dtype=torch.long)
         all_input_ids = torch.tensor([f.input_ids for f in eval_features], dtype=torch.long)
         all_input_mask = torch.tensor([f.input_mask for f in eval_features], dtype=torch.long)
         all_segment_ids = torch.tensor([f.segment_ids for f in eval_features], dtype=torch.long)
@@ -740,7 +707,6 @@ def evaluate(args, model, device, processor, label_list, num_labels, tokenizer, 
         elif output_mode == "regression":
             all_label_ids = torch.tensor([f.label_id for f in eval_features], dtype=torch.float)
 
-        # eval_data = TensorDataset(all_input_ids, all_feature_ids, all_position_ids, all_input_mask, all_segment_ids, all_label_ids)
         eval_data = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_label_ids)
         # Run prediction for full data
         eval_sampler = SequentialSampler(eval_data)
@@ -752,11 +718,8 @@ def evaluate(args, model, device, processor, label_list, num_labels, tokenizer, 
         preds = []
         temp = []
 
-        # for input_ids, feature_ids, position_ids, input_mask, segment_ids, label_ids in tqdm(eval_dataloader, desc="Evaluating"):
         for input_ids, input_mask, segment_ids, label_ids in tqdm(eval_dataloader, desc="Evaluating"):
             input_ids = input_ids.to(device)
-            # feature_ids = feature_ids.to(device)
-            # position_ids = position_ids.to(device)
             input_mask = input_mask.to(device)
             segment_ids = segment_ids.to(device)
             label_ids = label_ids.to(device)
@@ -783,18 +746,11 @@ def evaluate(args, model, device, processor, label_list, num_labels, tokenizer, 
             labels = label_ids.detach().cpu().numpy().tolist()
             start = batch_idx*args.eval_batch_size
             end = start+len(labels)
-            # end = min((batch_idx+1)*args.eval_batch_size, len(eval_examples))
             batch_range = list(range(start, end))
             csv_names = [eval_examples[i][0].guid.replace("{}-".format(args.test_set), "") for i in batch_range]
             facts = [eval_examples[i][0].text_b for i in batch_range]
             labels = label_ids.detach().cpu().numpy().tolist()
-            # try:
             assert len(csv_names) == len(facts) == len(labels)
-            # except AssertionError:
-            #     print(len(csv_names))
-            #     print(len(facts))
-            #     print(len(labels))
-            #     sys.exit(1)
 
             temp.extend([(x, y, z) for x, y, z in zip(csv_names, facts, labels)])
             batch_idx += 1
