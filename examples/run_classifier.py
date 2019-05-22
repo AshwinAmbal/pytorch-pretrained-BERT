@@ -16,16 +16,16 @@
 """BERT finetuning runner."""
 
 from __future__ import absolute_import, division, print_function
-from collections import Counter, OrderedDict
+from collections import OrderedDict
 import argparse
 import csv
 import logging
 import os
 import random
 import sys
-import pdb
 import io
 import json
+import glob
 
 import numpy as np
 import torch
@@ -147,7 +147,7 @@ class QqpProcessor(DataProcessor):
 
 
 def convert_examples_to_features(examples, label_list, max_seq_length,
-                                 tokenizer, output_mode, fact_place=None, balance=False):
+                                 tokenizer, output_mode, fact_place=None, balance=False, verbose=False):
     """Loads a data file into a list of `InputBatch`s."""
     assert fact_place is not None
     label_map = {label: i for i, label in enumerate(label_list)}
@@ -241,7 +241,7 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
         else:
             raise KeyError(output_mode)
 
-        if ex_index < 5:
+        if verbose and ex_index < 5:
             logger.info("*** Example ***")
             logger.info("guid: %s" % (example.guid))
             logger.info("tokens: %s" % " ".join([str(x) for x in tokens]))
@@ -332,7 +332,8 @@ def main():
     logger.info("Running %s" % ' '.join(sys.argv))
 
     parser = argparse.ArgumentParser()
-    my_root_dir = "/scratch/home"
+    # my_root_dir = "/scratch/home"
+    my_root_dir = "/mnt/bhd"
     ## Required parameters
     parser.add_argument("--do_train",
                         action='store_true',
@@ -349,6 +350,10 @@ def main():
                         default=None,
                         type=str,
                         help="The output directory where the model predictions and checkpoints will be loaded.")
+    parser.add_argument('--load_step',
+                        type=int,
+                        default=0,
+                        help="The checkpoint step to be loaded")
     parser.add_argument("--fact",
                         default="first",
                         choices=["first", "second"],
@@ -444,6 +449,13 @@ def main():
     args = parser.parse_args()
     pprint(vars(args))
     sys.stdout.flush()
+    if args.do_eval and not args.do_train:
+        if args.load_dir is None:
+            if args.load_step > 0:
+                args.load_dir = "/mnt/bhd/hongmin/tfv_bert_output_table2sents/outputs_fact-{}_{}/save_step_{}"\
+                    .format(args.fact, args.scan, args.load_step)
+            else:
+                args.load_dir = glob.glob("/mnt/bhd/hongmin/tfv_bert_output_table2sents/outputs_fact-{}_{}/best_model/save_step_*".format(args.fact, args.scan))[0]
 
     if args.server_ip and args.server_port:
         # Distant debugging - see https://code.visualstudio.com/docs/python/debugging#_attach-to-a-local-script
@@ -531,9 +543,10 @@ def main():
     else:
         load_dir = args.bert_model
 
+    # NOTE: Main Entrance to BERT Model
     model = BertForSequenceClassification.from_pretrained(load_dir,
-              cache_dir=cache_dir,
-              num_labels=num_labels)
+                                                          cache_dir=cache_dir,
+                                                          num_labels=num_labels)
     if args.fp16:
         model.half()
     model.to(device)
@@ -697,12 +710,16 @@ def main():
         # if not args.do_train:
             # Load a trained model and vocabulary that you have fine-tuned
             # model = BertForSequenceClassification.from_pretrained(args.load_dir, num_labels=num_labels)
+        parent_dir = os.path.dirname(args.load_dir)
+        tbwriter = SummaryWriter(os.path.join(parent_dir, 'eval/events'))
+        load_step = int(os.path.basename(args.load_dir).replace('save_step_', ''))
+        global_step = 0
         evaluate(args, model, device, processor, label_list, num_labels, tokenizer, output_mode, tr_loss,
-                 global_step, task_name)
+                 global_step, task_name, tbwriter=tbwriter, load_step=load_step)
 
 
 def evaluate(args, model, device, processor, label_list, num_labels, tokenizer, output_mode, tr_loss, global_step,
-             task_name, tbwriter=None, output_dir=None):
+             task_name, tbwriter=None, output_dir=None, load_step=0):
 
     if args.do_eval and (args.local_rank == -1 or torch.distributed.get_rank() == 0):
         eval_examples = processor.get_dev_examples(args.data_dir, dataset=args.test_set)
@@ -805,17 +822,18 @@ def evaluate(args, model, device, processor, label_list, num_labels, tokenizer, 
         result = compute_metrics(task_name, preds, all_label_ids.numpy())
         loss = tr_loss/args.period if args.do_train and global_step > 0 else None
 
+        log_step = global_step if args.do_train and global_step > 0 else load_step
         result['eval_loss'] = eval_loss
-        result['global_step'] = global_step
+        result['global_step'] = log_step
         result['loss'] = loss
 
-        output_eval_metrics = os.path.join(args.output_dir, "eval_metrics.txt")
+        output_eval_metrics = os.path.join(save_dir, "eval_metrics.txt")
         with open(output_eval_metrics, "a") as writer:
             logger.info("***** Eval results {}*****".format(args.test_set))
             writer.write("***** Eval results {}*****\n".format(args.test_set))
             for key in sorted(result.keys()):
                 if result[key] is not None and tbwriter is not None:
-                    tbwriter.add_scalar('{}/{}'.format(args.test_set, key), result[key], global_step)
+                    tbwriter.add_scalar('{}/{}'.format(args.test_set, key), result[key], log_step)
                 logger.info("  %s = %s", key, str(result[key]))
                 writer.write("%s = %s\n" % (key, str(result[key])))
 
