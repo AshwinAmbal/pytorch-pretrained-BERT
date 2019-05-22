@@ -334,6 +334,10 @@ def main():
                         choices=["vertical", "horizontal"],
                         type=str,
                         help="The direction of linearizing table cells.")
+    parser.add_argument("--data_dir",
+                        default="",
+                        type=str,
+                        help="The input data dir. Should contain the .tsv files (or other data files) for the task.")
     parser.add_argument("--load_dir",
                         default=None,
                         type=str,
@@ -360,10 +364,6 @@ def main():
                         action='store_true',
                         help="balance between + and - samples for training.")
     ## Other parameters
-    parser.add_argument("--data_dir",
-                        default="",
-                        type=str,
-                        help="The input data dir. Should contain the .tsv files (or other data files) for the task.")
     parser.add_argument("--bert_model",
                         default="bert-base-multilingual-cased",
                         type=str,
@@ -375,7 +375,7 @@ def main():
                         type=str,
                         help="The name of the task to train.")
     parser.add_argument("--output_dir",
-                        default="tmp",
+                        default="outputs",
                         type=str,
                         help="The output directory where the model predictions and checkpoints will be written.")
     parser.add_argument('--period',
@@ -488,7 +488,7 @@ def main():
         raise ValueError("At least one of `do_train` or `do_eval` must be True.")
 
     args.output_dir = "{}_fact-{}_{}".format(args.output_dir, args.fact, args.scan)
-    args.data_dir = "{}_{}".format(args.data_dir, args.scan)
+    args.data_dir = os.path.join(args.data_dir, "tsv_data_{}".format(args.scan))
     logger.info("Datasets are loaded from {}\n Outputs will be saved to {}".format(args.data_dir, args.output_dir))
     if os.path.exists(args.output_dir) and os.listdir(args.output_dir) and args.do_train:
         raise ValueError("Output directory ({}) already exists and is not empty.".format(args.output_dir))
@@ -673,23 +673,28 @@ def main():
                     model.eval()
                     torch.set_grad_enabled(False)  # turn off gradient tracking
                     evaluate(args, model, device, processor, label_list, num_labels, tokenizer, output_mode, tr_loss,
-                             global_step, task_name, tbwriter=writer, output_dir=output_dir)
+                             global_step, task_name, tbwriter=writer, save_dir=output_dir)
                     model.train()  # turn on train mode
                     torch.set_grad_enabled(True)  # start gradient tracking
                     tr_loss = 0
 
     # do eval before exit
     if args.do_eval:
-        parent_dir = os.path.dirname(args.load_dir)
-        tbwriter = SummaryWriter(os.path.join(parent_dir, 'eval/events'))
-        load_step = int(os.path.basename(args.load_dir).replace('save_step_', ''))
-        global_step = 0
+        if not args.do_train:
+            global_step = 0
+            output_dir = None
+        save_dir = output_dir if output_dir is not None else args.load_dir
+        tbwriter = SummaryWriter(os.path.join(save_dir, 'eval/events'))
+        load_step = args.load_step
+        if args.load_dir is not None:
+            load_step = int(os.path.split(os.path.dirname(args.load_dir))[1].replace('save_step_', ''))
+            print("load_step = {}".format(load_step))
         evaluate(args, model, device, processor, label_list, num_labels, tokenizer, output_mode, tr_loss,
-                 global_step, task_name, tbwriter=tbwriter, load_step=load_step)
+                 global_step, task_name, tbwriter=tbwriter, save_dir=save_dir, load_step=load_step)
 
 
 def evaluate(args, model, device, processor, label_list, num_labels, tokenizer, output_mode, tr_loss, global_step,
-             task_name, tbwriter=None, output_dir=None, load_step=0):
+             task_name, tbwriter=None, save_dir=None, load_step=0):
 
     if args.do_eval and (args.local_rank == -1 or torch.distributed.get_rank() == 0):
         eval_examples = processor.get_dev_examples(args.data_dir, dataset=args.test_set)
@@ -770,7 +775,7 @@ def evaluate(args, model, device, processor, label_list, num_labels, tokenizer, 
             else:
                 evaluation_results[c].append({'fact': f, 'gold': int(l), 'pred': int(y)})
 
-        save_dir = output_dir if output_dir is not None else args.load_dir
+        print("save_dir is {}".format(save_dir))
         output_eval_file = os.path.join(save_dir, "{}_eval_results.json".format(args.test_set))
         with io.open(output_eval_file, "w", encoding='utf-8') as fout:
             json.dump(evaluation_results, fout, sort_keys=True, indent=4)
